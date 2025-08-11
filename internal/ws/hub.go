@@ -3,13 +3,15 @@ package ws
 import (
 	"encoding/json" // ← новый импорт
 	"sync"
+	"time"
 )
 
 // Envelope теперь хранит и кто шлёт
 type Envelope struct {
-	From    string
-	To      string
-	Message []byte
+	From     string
+	To       string
+	Message  []byte
+	SendTime time.Time
 }
 
 type Hub struct {

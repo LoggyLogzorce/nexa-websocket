@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"time"
+	"websocket-service/internal/storage"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -20,10 +21,11 @@ type Client struct {
 	hub  *Hub
 	conn *websocket.Conn
 	send chan []byte
+	repo storage.MessageRepository
 	ID   string
 }
 
-func ServeWS(hub *Hub) gin.HandlerFunc {
+func ServeWS(hub *Hub, repo storage.MessageRepository) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// получаем идентификатор (открытый ключ) из query
 		id := c.Query("id")
@@ -42,6 +44,7 @@ func ServeWS(hub *Hub) gin.HandlerFunc {
 			hub:  hub,
 			conn: conn,
 			send: make(chan []byte, 256),
+			repo: repo,
 			ID:   id,
 		}
 		hub.register <- client
@@ -70,15 +73,33 @@ func (c *Client) readPump() {
 		}
 
 		var msg struct {
-			To   string `json:"to"`
-			From string `json:"from"`
-			Data []byte `json:"data"`
+			To       string    `json:"to"`
+			From     string    `json:"from"`
+			Data     []byte    `json:"data"`
+			SendTime time.Time `json:"send_time"`
 		}
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			log.Println("Invalid msg:", err)
 			continue
 		}
-		c.hub.send <- Envelope{To: msg.To, From: msg.From, Message: msg.Data}
+		c.hub.send <- Envelope{To: msg.To, From: msg.From, Message: msg.Data, SendTime: time.Now()}
+		//go func() {
+		//	message := models.Message{
+		//		MessageId:      uuid.New(),
+		//		SenderId:       msg.From,
+		//		ConversationId: msg.To,
+		//		Ciphertext:     string(msg.Data),
+		//		Nonce:          "",
+		//		CreatedAt:      time.Now(),
+		//		IsRead:         false,
+		//		IsDeleted:      false,
+		//	}
+		//	ctx := context.Background()
+		//	err = c.repo.InsertMSG(ctx, message)
+		//	if err != nil {
+		//		log.Println("Ошибка добавления сообщения в базу:", err)
+		//	}
+		//}()
 	}
 }
 
@@ -91,7 +112,6 @@ func (c *Client) writePump() {
 
 	for {
 		select {
-		// msgBytes — это JSON вида {"from":"<senderID>","data":"<base64...>"}
 		case msgBytes, ok := <-c.send:
 			c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if !ok {
@@ -99,6 +119,7 @@ func (c *Client) writePump() {
 				return
 			}
 			if err := c.conn.WriteMessage(websocket.TextMessage, msgBytes); err != nil {
+				log.Println("Error sending msg:", err)
 				return
 			}
 
